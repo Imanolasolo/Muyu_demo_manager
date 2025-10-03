@@ -1,4 +1,2 @@
 streamlit
 python-jose
-passlib[bcrypt]
-sqlite3

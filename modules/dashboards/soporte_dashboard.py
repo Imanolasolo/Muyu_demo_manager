@@ -1,0 +1,3 @@
+def show(st, conn, user):
+    st.title("Dashboard Soporte")
+    # ...aquí va la lógica y vistas del dashboard soporte...

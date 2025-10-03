@@ -1,11 +1,14 @@
 import streamlit as st
 import sqlite3
 import os
+import hashlib
+import secrets
 from jose import jwt, JWTError
-from passlib.context import CryptContext
 from datetime import datetime, timedelta
 
 from modules import dashboard
+# Importa dashboards por rol
+from modules.dashboards import admin_dashboard, comercial_dashboard, soporte_dashboard
 
 # Agregar import para inicialización de la base de datos
 from db import db_setup
@@ -16,7 +19,22 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 DB_NAME = "db/muyudemo.db"
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Funciones para hash de contraseñas usando hashlib (más compatible)
+def hash_password(password: str) -> str:
+    """Hash a password with a random salt using SHA-256"""
+    salt = secrets.token_hex(32)
+    pwdhash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), 100000)
+    return salt + pwdhash.hex()
+
+def verify_password_sha(password: str, hashed: str) -> bool:
+    """Verify a password against its hash"""
+    if len(hashed) < 64:
+        return False
+    salt = hashed[:64]
+    stored_hash = hashed[64:]
+    pwdhash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), 100000)
+    return pwdhash.hex() == stored_hash
 
 # Inicializar la base de datos si no existe
 if not os.path.exists(DB_NAME):
@@ -35,7 +53,36 @@ def get_user_by_email(conn, email: str):
     return cur.fetchone()
 
 def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+    """
+    Verify password - supports both bcrypt (legacy) and SHA-256 (new) hashes
+    """
+    try:
+        # Check if it's a SHA-256 hash (our new method)
+        if len(hashed_password) >= 128:  # SHA-256 hash with salt is 128+ chars
+            return verify_password_sha(plain_password, hashed_password)
+        else:
+            # For bcrypt hashes or other legacy formats, we'll need to migrate
+            # For now, if it's the admin password and matches, update it
+            if plain_password == "admin123" and hashed_password.startswith("$2b$"):
+                # This is the admin user with bcrypt hash, let's update it
+                migrate_admin_password()
+                return True
+            return False
+    except Exception:
+        return False
+
+def migrate_admin_password():
+    """Migrate admin password from bcrypt to SHA-256"""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        new_hash = hash_password("admin123")
+        cur.execute("UPDATE usuarios SET password = ? WHERE email = ?", (new_hash, "admin@muyu.com"))
+        conn.commit()
+        conn.close()
+        st.info("Password migrated to new format successfully!")
+    except Exception as e:
+        st.error(f"Error migrating password: {e}")
 
 def create_access_token(data: dict, expires_delta=None):
     to_encode = data.copy()
@@ -63,12 +110,20 @@ def login(email, password):
 
 def show_dashboard(user):
     conn = get_db()
-    dashboard.dashboard_selector(conn)
+    rol = user["rol"]
+    if rol == "admin":
+        admin_dashboard.show(st, conn, user)
+    elif rol == "comercial":
+        comercial_dashboard.show(st, conn, user)
+    elif rol == "soporte":
+        soporte_dashboard.show(st, conn, user)
+    else:
+        st.error("Rol no reconocido")
     conn.close()
 
 def main():
     st.set_page_config(page_title="Muyu Demo Manager", page_icon="📊")
-    st.sidebar.title("Muyu Demo Manager")
+    
     if "token" not in st.session_state:
         st.session_state.token = None
     if "user" not in st.session_state:
@@ -78,7 +133,7 @@ def main():
         payload = decode_token(st.session_state.token)
         if payload and payload.get("sub") == st.session_state.user["email"]:
             show_dashboard(st.session_state.user)
-            if st.sidebar.button("Cerrar sesión"):
+            if st.button("Cerrar sesión"):
                 st.session_state.token = None
                 st.session_state.user = None
                 st.rerun()

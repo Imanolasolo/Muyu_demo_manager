@@ -1,0 +1,3 @@
+def show(st, conn, user):
+    st.title("Dashboard Comercial")
+    # ...aquí va la lógica y vistas del dashboard comercial...

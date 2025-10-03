@@ -1,5 +1,7 @@
 import sqlite3
-from passlib.context import CryptContext
+import hashlib
+import secrets
+import os
 
 # Nombre de la base de datos
 DB_NAME = "db/muyudemo.db"
@@ -89,6 +91,28 @@ def create_tables():
     )
     """)
 
+    # Tabla de fases de la demo
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS fases_demo (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL,
+        descripcion TEXT,
+        orden INTEGER NOT NULL
+    )
+    """)
+
+    # Tabla de tareas asociadas a cada fase
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS tareas_fase (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fase_id INTEGER NOT NULL,
+        nombre TEXT NOT NULL,
+        descripcion TEXT,
+        estado TEXT DEFAULT 'pendiente' CHECK(estado IN ('pendiente', 'en_progreso', 'completado')),
+        FOREIGN KEY (fase_id) REFERENCES fases_demo(id) ON DELETE CASCADE
+    )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -111,8 +135,41 @@ def seed_fases():
     conn.commit()
     conn.close()
 
+def seed_fases_demo():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    # Fases de la demo
+    fases = [
+        {"nombre": "Inicio demo", "descripcion": "Fase inicial del demo", "orden": 1},
+        {"nombre": "Onboarding", "descripcion": "Fase de onboarding", "orden": 2},
+        {"nombre": "Inicio grabaciones", "descripcion": "Fase de inicio de grabaciones", "orden": 3},
+        {"nombre": "Fin de grabaciones", "descripcion": "Fase de finalización de grabaciones", "orden": 4},
+        {"nombre": "Resultados", "descripcion": "Fase de presentación de resultados", "orden": 5},
+    ]
+
+    # Verificar si ya existen fases
+    c.execute("SELECT COUNT(*) FROM fases_demo")
+    count = c.fetchone()[0]
+
+    if count == 0:
+        for fase in fases:
+            c.execute("INSERT INTO fases_demo (nombre, descripcion, orden) VALUES (?, ?, ?)",
+                      (fase["nombre"], fase["descripcion"], fase["orden"]))
+        print("✅ Fases de demo cargadas correctamente.")
+    else:
+        print("ℹ️ Las fases de demo ya estaban registradas.")
+
+    conn.commit()
+    conn.close()
+
+def hash_password(password: str) -> str:
+    """Hash a password with a random salt using SHA-256"""
+    salt = secrets.token_hex(32)
+    pwdhash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), 100000)
+    return salt + pwdhash.hex()
+
 def create_admin_user():
-    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     # Cambia estos datos según tus necesidades
@@ -123,7 +180,7 @@ def create_admin_user():
     # Verifica si ya existe
     c.execute("SELECT * FROM usuarios WHERE email = ?", (admin_email,))
     if not c.fetchone():
-        hashed = pwd_context.hash(admin_password)
+        hashed = hash_password(admin_password)
         c.execute(
             "INSERT INTO usuarios (nombre, email, password, rol) VALUES (?, ?, ?, ?)",
             (admin_nombre, admin_email, hashed, admin_rol)
@@ -134,8 +191,18 @@ def create_admin_user():
     conn.commit()
     conn.close()
 
+def initialize_database():
+    """Create the database file if it does not exist."""
+    if not os.path.exists(DB_NAME):
+        print(f"📂 Creando la base de datos en {DB_NAME}...")
+        create_tables()
+        seed_fases()
+        seed_fases_demo()
+        create_admin_user()
+        print("✅ Base de datos creada e inicializada correctamente.")
+    else:
+        print("ℹ️ La base de datos ya existe.")
+
 if __name__ == "__main__":
-    create_tables()
-    seed_fases()
-    create_admin_user()
+    initialize_database()
     print(f"📂 Base de datos inicializada en {DB_NAME}")
