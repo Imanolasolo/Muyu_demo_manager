@@ -2,4 +2,12 @@ streamlit
 python-jose
 passlib
 bcrypt
+pandas
+numpy
+requests
+Pillow
+plotly
+altair
+python-dotenv
+
 
