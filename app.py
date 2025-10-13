@@ -103,7 +103,9 @@ def login(email, password):
     conn.close()
     if not user:
         return None
-    if not verify_password(password, user["password"]):
+    # Use safe password verification from auth_utils
+    from auth_utils import verify_password as safe_verify_password
+    if not safe_verify_password(password, user["password"]):
         return None
     token = create_access_token({"sub": user["email"], "rol": user["rol"]}, timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     return token, user

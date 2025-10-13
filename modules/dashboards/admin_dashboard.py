@@ -51,9 +51,8 @@ def crud_usuarios(conn):
             rol = st.selectbox("Rol", ["admin", "comercial", "soporte"])
             submitted = st.form_submit_button("Crear")
             if submitted:
-                from passlib.context import CryptContext
-                pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-                hashed = pwd_context.hash(password)
+                from auth_utils import safe_password_hash
+                hashed = safe_password_hash(password)
                 try:
                     usuarios.create_usuario(conn, nombre, email, hashed, rol)
                     st.success("Usuario creado")
@@ -76,9 +75,8 @@ def crud_usuarios(conn):
                 if nombre: fields["nombre"] = nombre
                 if email: fields["email"] = email
                 if password:
-                    from passlib.context import CryptContext
-                    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-                    fields["password"] = pwd_context.hash(password)
+                    from auth_utils import safe_password_hash
+                    fields["password"] = safe_password_hash(password)
                 if rol: fields["rol"] = rol
                 if fields:
                     usuarios.update_usuario(conn, user_id, **fields)
