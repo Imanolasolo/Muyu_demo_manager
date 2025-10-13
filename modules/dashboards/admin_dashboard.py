@@ -1,11 +1,10 @@
 import streamlit as st
-from cruds import instituciones, participantes  # Add participantes import
-
-from cruds import usuarios
+from cruds import instituciones, participantes, usuarios, demos
+import datetime
 def show(st, conn, user):
     st.title("Dashboard Administrador")
     st.sidebar.title("Menú")
-    menu_options = ["Gestión de Usuarios", "Gestión de Instituciones", "Gestión de Participantes", "Gestión de Fases"]
+    menu_options = ["Gestión de Usuarios", "Gestión de Instituciones", "Gestión de Participantes", "Gestión de Fases", "Gestión de Demos"]
     choice = st.sidebar.selectbox("Selecciona una opción", menu_options)
 
     if choice == "Gestión de Usuarios":
@@ -16,6 +15,8 @@ def show(st, conn, user):
         crud_participantes(conn)
     elif choice == "Gestión de Fases":
         crud_fases(conn)
+    elif choice == "Gestión de Demos":
+        gestión_demos_kanban(conn)
 
 
 def get_dashboard_data(conn, user):
@@ -281,4 +282,396 @@ def crud_fases(conn):
                 c.execute("DELETE FROM fases WHERE id = ?", (fase_id,))
                 conn.commit()
                 st.success("Fase eliminada")
+
+def gestión_demos_kanban(conn):
+    """Panel Kanban para gestión de demos"""
+    st.subheader("🎯 Gestión de Demos - Panel Kanban")
+    
+    # Estadísticas generales
+    stats = demos.get_demos_estadisticas(conn)
+    
+    # Crear métricas dinámicas basadas en las fases
+    fases_stats = stats.get("por_fases", {})
+    
+    # Mostrar métricas en columnas
+    if fases_stats:
+        num_cols = min(len(fases_stats) + 1, 6)  # Máximo 6 columnas
+        cols = st.columns(num_cols)
+        
+        with cols[0]:
+            st.metric("📝 Total", stats["total"])
+        
+        for i, (fase_nombre, cantidad) in enumerate(fases_stats.items(), 1):
+            if i < num_cols:
+                with cols[i]:
+                    # Truncar nombre si es muy largo
+                    nombre_corto = fase_nombre[:15] + "..." if len(fase_nombre) > 15 else fase_nombre
+                    st.metric(f"📋 {nombre_corto}", cantidad)
+    else:
+        st.metric("📝 Total", stats["total"])
+    
+    st.divider()
+    
+    # Formulario para crear nueva demo
+    with st.expander("➕ Crear Nueva Demo"):
+        with st.form("nueva_demo"):
+            col1, col2 = st.columns(2)
+            with col1:
+                titulo = st.text_input("Título de la Demo*")
+                descripcion = st.text_area("Descripción")
+                prioridad = st.selectbox("Prioridad", ["baja", "media", "alta"])
+            
+            with col2:
+                # Selector de institución
+                insts = instituciones.list_instituciones(conn)
+                inst_options = ["Sin asignar"] + [f"{inst['nombre']} (ID: {inst['id']})" for inst in insts]
+                inst_selected = st.selectbox("Institución", inst_options)
+                
+                # Selector de responsable
+                users = usuarios.list_usuarios(conn)
+                user_options = ["Sin asignar"] + [f"{user['nombre']} ({user['email']})" for user in users]
+                resp_selected = st.selectbox("Responsable", user_options)
+                
+                # Selector de fase inicial
+                fases_disponibles = demos.get_fases_disponibles(conn)
+                fase_options = [f"{fase['nombre']}" for fase in fases_disponibles]
+                fase_selected = st.selectbox("Fase inicial", fase_options, index=0)
+                
+                fecha_limite = st.date_input("Fecha límite (opcional)", value=None)
+            
+            submitted = st.form_submit_button("Crear Demo", type="primary")
+            
+            if submitted and titulo:
+                # Procesar institución
+                institucion_id = None
+                if inst_selected != "Sin asignar":
+                    for inst in insts:
+                        if f"{inst['nombre']} (ID: {inst['id']})" == inst_selected:
+                            institucion_id = inst['id']
+                            break
+                
+                # Procesar responsable
+                responsable = None
+                if resp_selected != "Sin asignar":
+                    for user in users:
+                        if f"{user['nombre']} ({user['email']})" == resp_selected:
+                            responsable = user['nombre']
+                            break
+                
+                # Procesar fase
+                fase_id = None
+                for fase in fases_disponibles:
+                    if fase['nombre'] == fase_selected:
+                        fase_id = fase['id']
+                        break
+                
+                demos.create_demo(conn, titulo, descripcion, fase_id, institucion_id, responsable, prioridad)
+                st.success("Demo creada exitosamente!")
+                st.rerun()
+    
+    st.divider()
+    
+    # Panel Kanban
+    st.markdown("### 📋 Tablero Kanban")
+    
+    # Obtener todas las fases disponibles
+    todas_las_fases = demos.get_fases_disponibles(conn)
+    
+    if not todas_las_fases:
+        st.error("No hay fases configuradas. Por favor, configure las fases primero.")
+        return
+    
+    # Filtros y configuración del kanban
+    st.markdown("#### 🔍 Filtros y Configuración")
+    
+    col_filtros1, col_filtros2, col_filtros3 = st.columns(3)
+    
+    with col_filtros1:
+        # Filtro para seleccionar qué fases mostrar
+        nombres_fases = [fase['nombre'] for fase in todas_las_fases]
+        fases_seleccionadas = st.multiselect(
+            "📋 Seleccionar fases a mostrar:",
+            nombres_fases,
+            default=nombres_fases,  # Por defecto todas seleccionadas
+            key="fases_filtro"
+        )
+    
+    with col_filtros2:
+        # Filtro por prioridad
+        prioridades_disponibles = ["Todas", "alta", "media", "baja"]
+        prioridad_filtro = st.selectbox(
+            "⚡ Filtrar por prioridad:",
+            prioridades_disponibles,
+            key="prioridad_filtro"
+        )
+    
+    with col_filtros3:
+        # Configuración de columnas por fila
+        max_cols = min(len(fases_seleccionadas), 6) if fases_seleccionadas else 4
+        cols_por_fila = st.selectbox(
+            "📱 Columnas por fila:",
+            options=[2, 3, 4, 5, 6],
+            index=2,  # 4 columnas por defecto
+            key="cols_por_fila"
+        )
+    
+    # Fila adicional de filtros
+    col_filtros4, col_filtros5 = st.columns(2)
+    
+    with col_filtros4:
+        # Filtro por responsable
+        todos_demos = demos.list_demos(conn)
+        responsables_unicos = list(set([demo['responsable'] for demo in todos_demos if demo['responsable']]))
+        responsables_options = ["Todos"] + responsables_unicos
+        responsable_filtro = st.selectbox(
+            "👤 Filtrar por responsable:",
+            responsables_options,
+            key="responsable_filtro"
+        )
+    
+    with col_filtros5:
+        # Búsqueda por título
+        busqueda_titulo = st.text_input(
+            "🔍 Buscar por título:",
+            placeholder="Escribe para buscar...",
+            key="busqueda_titulo"
+        )
+    
+    # Filtrar fases según selección
+    if fases_seleccionadas:
+        fases_disponibles = [fase for fase in todas_las_fases if fase['nombre'] in fases_seleccionadas]
+    else:
+        fases_disponibles = todas_las_fases
+        st.warning("⚠️ No hay fases seleccionadas. Mostrando todas las fases disponibles.")
+    
+    # Mostrar resumen de filtros aplicados
+    if prioridad_filtro != "Todas" or responsable_filtro != "Todos" or busqueda_titulo or len(fases_seleccionadas) != len(todas_las_fases):
+        st.markdown("#### 🎯 Filtros Aplicados:")
+        filtros_info = []
+        if len(fases_seleccionadas) != len(todas_las_fases):
+            filtros_info.append(f"📋 Fases: {len(fases_seleccionadas)}/{len(todas_las_fases)} seleccionadas")
+        if prioridad_filtro != "Todas":
+            filtros_info.append(f"⚡ Prioridad: {prioridad_filtro}")
+        if responsable_filtro != "Todos":
+            filtros_info.append(f"👤 Responsable: {responsable_filtro}")
+        if busqueda_titulo:
+            filtros_info.append(f"🔍 Búsqueda: '{busqueda_titulo}'")
+        
+        st.info(" | ".join(filtros_info))
+    
+    st.divider()
+    
+    # Mostrar fases en grupos según configuración
+    num_fases = len(fases_disponibles)
+    
+    if num_fases == 0:
+        st.info("No hay fases para mostrar con los filtros actuales.")
+        return
+    
+    # Dividir fases en grupos según cols_por_fila
+    total_grupos = (num_fases + cols_por_fila - 1) // cols_por_fila
+    
+    for grupo_idx in range(total_grupos):
+        i = grupo_idx * cols_por_fila
+        grupo_fases = fases_disponibles[i:i + cols_por_fila]
+        
+        # Añadir separador entre grupos si hay más de un grupo
+        if grupo_idx > 0:
+            st.markdown("---")
+            st.markdown(f"#### Grupo {grupo_idx + 1}")
+        
+        cols = st.columns(len(grupo_fases))
+    
+        # Configuración de colores para las fases
+        colores_fases = [
+            "#007BFF",  # Azul
+            "#FFA500",  # Naranja  
+            "#28A745",  # Verde
+            "#DC3545",  # Rojo
+            "#6F42C1",  # Púrpura
+            "#20C997",  # Teal
+            "#FFC107",  # Amarillo
+            "#6C757D"   # Gris
+        ]
+        
+        for j, (fase, col) in enumerate(zip(grupo_fases, cols)):
+            with col:
+                # Usar índice global para los colores
+                color_idx = (i + j) % len(colores_fases)
+                color = colores_fases[color_idx]
+                fase_nombre_corto = fase['nombre'][:20] + "..." if len(fase['nombre']) > 20 else fase['nombre']
+                
+                st.markdown(f"""
+                    <div style="
+                        background-color: {color}20; 
+                        border-left: 4px solid {color}; 
+                        padding: 10px; 
+                        border-radius: 5px; 
+                        margin-bottom: 10px;
+                    ">
+                        <h4 style="margin: 0; color: {color}; font-size: 14px;">
+                            📋 {fase_nombre_corto}
+                        </h4>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                # Obtener demos de esta fase
+                demos_fase = demos.list_demos_by_fase(conn, fase['id'])
+                
+                # Aplicar filtros
+                if prioridad_filtro != "Todas":
+                    demos_fase = [demo for demo in demos_fase if demo['prioridad'] == prioridad_filtro]
+                
+                if responsable_filtro != "Todos":
+                    demos_fase = [demo for demo in demos_fase if demo['responsable'] == responsable_filtro]
+                
+                if busqueda_titulo:
+                    demos_fase = [demo for demo in demos_fase if busqueda_titulo.lower() in demo['titulo'].lower()]
+                
+                if not demos_fase:
+                    # Mensaje personalizado según filtros activos
+                    filtros_activos = []
+                    if prioridad_filtro != "Todas":
+                        filtros_activos.append(f"prioridad '{prioridad_filtro}'")
+                    if responsable_filtro != "Todos":
+                        filtros_activos.append(f"responsable '{responsable_filtro}'")
+                    if busqueda_titulo:
+                        filtros_activos.append(f"título que contenga '{busqueda_titulo}'")
+                    
+                    if filtros_activos:
+                        st.info(f"No hay demos en esta fase con: {', '.join(filtros_activos)}")
+                    else:
+                        st.info("No hay demos en esta fase")
+                else:
+                    for demo in demos_fase:
+                        # Crear tarjeta expandible para cada demo
+                        prioridad_color = {"alta": "#DC3545", "media": "#FFC107", "baja": "#6C757D"}
+                        prioridad_icon = {"alta": "🔴", "media": "🟡", "baja": "🟢"}
+                        
+                        # Título del expander con información resumida
+                        titulo_expander = f"{prioridad_icon[demo['prioridad']]} {demo['titulo']}"
+                        if demo['responsable']:
+                            titulo_expander += f" | 👤 {demo['responsable']}"
+                        
+                        with st.expander(titulo_expander, expanded=False):
+                            # Crear formulario de edición dentro del expander
+                            with st.form(f"demo_form_{demo['id']}"):
+                                st.markdown(f"**📝 Demo ID:** {demo['id']}")
+                            
+                                # Campos editables
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    nuevo_titulo = st.text_input("📌 Título:", value=demo['titulo'], key=f"titulo_{demo['id']}")
+                                    nueva_prioridad = st.selectbox("⚡ Prioridad:", ["baja", "media", "alta"], 
+                                                                 index=["baja", "media", "alta"].index(demo['prioridad']),
+                                                                 key=f"prioridad_{demo['id']}")
+                                    
+                                    # Selector de institución
+                                    insts = instituciones.list_instituciones(conn)
+                                    inst_options = ["Sin asignar"] + [f"{inst['nombre']} (ID: {inst['id']})" for inst in insts]
+                                    inst_actual = demo['institucion_nombre'] if demo['institucion_nombre'] else "Sin asignar"
+                                    inst_index = 0
+                                    if inst_actual != "Sin asignar":
+                                        for idx, inst_opt in enumerate(inst_options):
+                                            if inst_actual in inst_opt:
+                                                inst_index = idx
+                                                break
+                                    nueva_institucion = st.selectbox("🏫 Institución:", inst_options, index=inst_index, key=f"inst_{demo['id']}")
+                                
+                                with col2:
+                                    nuevo_responsable = st.text_input("👤 Responsable:", value=demo['responsable'] or "", key=f"resp_{demo['id']}")
+                                    
+                                    # Selector de fase
+                                    todas_las_fases_form = demos.get_fases_disponibles(conn)
+                                    fase_names = [f['nombre'] for f in todas_las_fases_form]
+                                    fase_actual_index = 0
+                                    if demo.get('fase_nombre'):
+                                        try:
+                                            fase_actual_index = fase_names.index(demo['fase_nombre'])
+                                        except ValueError:
+                                            pass
+                                    nueva_fase_sel = st.selectbox("📋 Fase:", fase_names, index=fase_actual_index, key=f"fase_{demo['id']}")
+                                    
+                                    # Fecha límite
+                                    fecha_actual = None
+                                    if demo.get('fecha_limite'):
+                                        try:
+                                            fecha_actual = datetime.datetime.strptime(demo['fecha_limite'], "%Y-%m-%d").date()
+                                        except:
+                                            pass
+                                    nueva_fecha_limite = st.date_input("📅 Fecha límite:", value=fecha_actual, key=f"fecha_{demo['id']}")
+                                
+                                # Descripción completa
+                                nueva_descripcion = st.text_area("📄 Descripción:", value=demo['descripcion'] or "", height=100, key=f"desc_{demo['id']}")
+                            
+                                # Información adicional (solo lectura)
+                                col_info1, col_info2 = st.columns(2)
+                                with col_info1:
+                                    if demo.get('fecha_creacion'):
+                                        st.info(f"📅 Creado: {demo['fecha_creacion']}")
+                                with col_info2:
+                                    if demo.get('fecha_actualizacion'):
+                                        st.info(f"🔄 Actualizado: {demo['fecha_actualizacion']}")
+                                
+                                # Mostrar días restantes si hay fecha límite
+                                if nueva_fecha_limite:
+                                    dias_restantes = (nueva_fecha_limite - datetime.date.today()).days
+                                    if dias_restantes < 0:
+                                        st.error(f"⚠️ Vencido hace {abs(dias_restantes)} días")
+                                    elif dias_restantes == 0:
+                                        st.warning("⏰ Vence hoy")
+                                    elif dias_restantes <= 7:
+                                        st.warning(f"⏳ Vence en {dias_restantes} días")
+                                    else:
+                                        st.success(f"✅ {dias_restantes} días restantes")
+                                
+                                # Botones de acción
+                                col_save, col_move, col_delete = st.columns(3)
+                            
+                                with col_save:
+                                    if st.form_submit_button("💾 Guardar Cambios", type="primary", use_container_width=True):
+                                        # Procesar nueva institución
+                                        nueva_institucion_id = None
+                                        if nueva_institucion != "Sin asignar":
+                                            for inst in insts:
+                                                if f"{inst['nombre']} (ID: {inst['id']})" == nueva_institucion:
+                                                    nueva_institucion_id = inst['id']
+                                                    break
+                                        
+                                        # Procesar nueva fase
+                                        nueva_fase_id = None
+                                        for f in todas_las_fases_form:
+                                            if f['nombre'] == nueva_fase_sel:
+                                                nueva_fase_id = f['id']
+                                                break
+                                        
+                                        # Actualizar demo
+                                        demos.update_demo(conn, demo['id'],
+                                                        titulo=nuevo_titulo,
+                                                        descripcion=nueva_descripcion,
+                                                        prioridad=nueva_prioridad,
+                                                        fase_id=nueva_fase_id,
+                                                        institucion_id=nueva_institucion_id,
+                                                        responsable=nuevo_responsable if nuevo_responsable else None,
+                                                        fecha_limite=nueva_fecha_limite.strftime('%Y-%m-%d') if nueva_fecha_limite else None)
+                                        
+                                        st.success("✅ Demo actualizada exitosamente!")
+                                        st.rerun()
+                                
+                                with col_move:
+                                    # Mover a otra fase
+                                    otras_fases = [f for f in todas_las_fases_form if f['nombre'] != nueva_fase_sel]
+                                    if otras_fases and st.form_submit_button("🔄 Mover Fase", use_container_width=True):
+                                        # Mover a la siguiente fase (o primera disponible)
+                                        siguiente_fase = otras_fases[0]
+                                        demos.cambiar_fase_demo(conn, demo['id'], siguiente_fase['id'])
+                                        st.success(f"📋 Demo movida a: {siguiente_fase['nombre']}")
+                                        st.rerun()
+                                
+                                with col_delete:
+                                    if st.form_submit_button("🗑️ Eliminar", type="secondary", use_container_width=True):
+                                        demos.delete_demo(conn, demo['id'])
+                                        st.success("🗑️ Demo eliminada")
+                                        st.rerun()
 
