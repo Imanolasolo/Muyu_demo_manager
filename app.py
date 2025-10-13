@@ -122,7 +122,7 @@ def show_dashboard(user):
     conn.close()
 
 def main():
-    st.set_page_config(page_title="Muyu Demo Manager", page_icon="📊")
+    st.set_page_config(page_title="Muyu Demo Manager", page_icon="📊", layout="wide")
     
     if "token" not in st.session_state:
         st.session_state.token = None
@@ -142,11 +142,18 @@ def main():
             st.session_state.token = None
             st.session_state.user = None
 
-    st.title("Iniciar sesión")
-    with st.form("login_form"):
-        email = st.text_input("Email")
-        password = st.text_input("Contraseña", type="password")
-        submitted = st.form_submit_button("Entrar")
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.image("assets/muyu_logo_2.png", width=200)
+    with col2:
+        st.title("Bienvenidos a :orange[Muyu Demo platform]")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        with st.form("login_form"):
+            email = st.text_input("Email")
+            password = st.text_input("Contraseña", type="password")
+            submitted = st.form_submit_button("Entrar")
         if submitted:
             result = login(email, password)
             if result:
@@ -158,8 +165,11 @@ def main():
             else:
                 st.error("Usuario o contraseña incorrectos")
                 st.rerun()
-            
-            
+    with col2:
+         with st.expander("Instrucciones de uso de plataforma Demo", expanded=False):       
+            st.write("1. Ingrese sus credenciales para acceder a la plataforma.")
+            st.write("2. Una vez dentro, podrá navegar por las diferentes secciones según su rol.")
+            st.write("3. Si tiene problemas, contacte al administrador.")
 
 if __name__ == "__main__":
     main()

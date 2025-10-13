@@ -113,6 +113,23 @@ def create_tables():
     )
     """)
 
+    # Tabla de demos para gestión kanban
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS demos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        titulo TEXT NOT NULL,
+        descripcion TEXT,
+        estado TEXT DEFAULT 'pendiente' CHECK(estado IN ('pendiente', 'en_progreso', 'completado', 'cancelado')),
+        institucion_id INTEGER,
+        responsable TEXT,
+        prioridad TEXT DEFAULT 'media' CHECK(prioridad IN ('baja', 'media', 'alta')),
+        fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        fecha_limite DATE,
+        FOREIGN KEY (institucion_id) REFERENCES instituciones(id) ON DELETE SET NULL
+    )
+    """)
+
     conn.commit()
     conn.close()
 

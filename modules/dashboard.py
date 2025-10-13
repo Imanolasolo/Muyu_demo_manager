@@ -1,5 +1,6 @@
 import streamlit as st
-from cruds import usuarios, instituciones, participantes, fases_completadas
+from cruds import usuarios, instituciones, participantes, fases_completadas, demos
+import datetime
 
 def get_dashboard_data(conn, user):
     cur = conn.cursor()
@@ -247,18 +248,251 @@ def crud_fases_completadas(conn):
             fases_completadas.delete_fase_institucion(conn, fase_inst_id)
             st.success("Fase-Institución eliminada")
 
+def gestión_demos_kanban(conn):
+    """Panel Kanban para gestión de demos"""
+    st.subheader("🎯 Gestión de Demos - Panel Kanban")
+    
+    # Estadísticas generales
+    stats = demos.get_demos_estadisticas(conn)
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
+        st.metric("📝 Total", stats["total"])
+    with col2:
+        st.metric("⏳ Pendientes", stats["pendiente"])
+    with col3:
+        st.metric("🔄 En Progreso", stats["en_progreso"])
+    with col4:
+        st.metric("✅ Completadas", stats["completado"])
+    with col5:
+        st.metric("❌ Canceladas", stats["cancelado"])
+    
+    st.divider()
+    
+    # Formulario para crear nueva demo
+    with st.expander("➕ Crear Nueva Demo"):
+        with st.form("nueva_demo"):
+            col1, col2 = st.columns(2)
+            with col1:
+                titulo = st.text_input("Título de la Demo*")
+                descripcion = st.text_area("Descripción")
+                prioridad = st.selectbox("Prioridad", ["baja", "media", "alta"])
+            
+            with col2:
+                # Selector de institución
+                insts = instituciones.list_instituciones(conn)
+                inst_options = ["Sin asignar"] + [f"{inst['nombre']} (ID: {inst['id']})" for inst in insts]
+                inst_selected = st.selectbox("Institución", inst_options)
+                
+                # Selector de responsable
+                users = usuarios.list_usuarios(conn)
+                user_options = ["Sin asignar"] + [f"{user['nombre']} ({user['email']})" for user in users]
+                resp_selected = st.selectbox("Responsable", user_options)
+                
+                fecha_limite = st.date_input("Fecha límite (opcional)", value=None)
+            
+            submitted = st.form_submit_button("Crear Demo", type="primary")
+            
+            if submitted and titulo:
+                # Procesar institución
+                institucion_id = None
+                if inst_selected != "Sin asignar":
+                    for inst in insts:
+                        if f"{inst['nombre']} (ID: {inst['id']})" == inst_selected:
+                            institucion_id = inst['id']
+                            break
+                
+                # Procesar responsable
+                responsable = None
+                if resp_selected != "Sin asignar":
+                    for user in users:
+                        if f"{user['nombre']} ({user['email']})" == resp_selected:
+                            responsable = user['nombre']
+                            break
+                
+                demos.create_demo(conn, titulo, descripcion, "pendiente", institucion_id, responsable, prioridad)
+                st.success("Demo creada exitosamente!")
+                st.rerun()
+    
+    st.divider()
+    
+    # Panel Kanban
+    st.markdown("### 📋 Tablero Kanban")
+    
+    # Crear columnas para el kanban
+    col_pendiente, col_progreso, col_completado, col_cancelado = st.columns(4)
+    
+    # Configuración de colores y estilos para cada columna
+    estados = {
+        "pendiente": {"color": "#FFA500", "icon": "⏳", "title": "Pendientes"},
+        "en_progreso": {"color": "#007BFF", "icon": "🔄", "title": "En Progreso"},
+        "completado": {"color": "#28A745", "icon": "✅", "title": "Completadas"},
+        "cancelado": {"color": "#DC3545", "icon": "❌", "title": "Canceladas"}
+    }
+    
+    columnas = [col_pendiente, col_progreso, col_completado, col_cancelado]
+    estados_keys = list(estados.keys())
+    
+    for i, (estado, col) in enumerate(zip(estados_keys, columnas)):
+        with col:
+            config = estados[estado]
+            st.markdown(f"""
+                <div style="
+                    background-color: {config['color']}20; 
+                    border-left: 4px solid {config['color']}; 
+                    padding: 10px; 
+                    border-radius: 5px; 
+                    margin-bottom: 10px;
+                ">
+                    <h4 style="margin: 0; color: {config['color']};">
+                        {config['icon']} {config['title']}
+                    </h4>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            # Obtener demos de este estado
+            demos_estado = demos.list_demos_by_estado(conn, estado)
+            
+            if not demos_estado:
+                st.info("No hay demos en este estado")
+            else:
+                for demo in demos_estado:
+                    # Crear tarjeta para cada demo
+                    prioridad_color = {"alta": "#DC3545", "media": "#FFC107", "baja": "#6C757D"}
+                    prioridad_icon = {"alta": "🔴", "media": "🟡", "baja": "🟢"}
+                    
+                    with st.container():
+                        st.markdown(f"""
+                            <div style="
+                                border: 1px solid #ddd; 
+                                border-radius: 8px; 
+                                padding: 12px; 
+                                margin: 8px 0; 
+                                background-color: white;
+                                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                            ">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                    <strong style="color: #333;">{demo['titulo']}</strong>
+                                    <span style="color: {prioridad_color[demo['prioridad']]}; font-size: 12px;">
+                                        {prioridad_icon[demo['prioridad']]} {demo['prioridad'].upper()}
+                                    </span>
+                                </div>
+                        """, unsafe_allow_html=True)
+                        
+                        if demo['descripcion']:
+                            st.markdown(f"<small style='color: #666;'>{demo['descripcion'][:100]}...</small>", unsafe_allow_html=True)
+                        
+                        if demo['institucion_nombre']:
+                            st.markdown(f"🏫 **Institución:** {demo['institucion_nombre']}")
+                        
+                        if demo['responsable']:
+                            st.markdown(f"👤 **Responsable:** {demo['responsable']}")
+                        
+                        if demo['fecha_limite']:
+                            fecha_limite = datetime.datetime.strptime(demo['fecha_limite'], "%Y-%m-%d").date()
+                            dias_restantes = (fecha_limite - datetime.date.today()).days
+                            color_fecha = "#DC3545" if dias_restantes < 0 else "#FFC107" if dias_restantes < 7 else "#28A745"
+                            st.markdown(f"📅 **Límite:** <span style='color: {color_fecha};'>{fecha_limite}</span>", unsafe_allow_html=True)
+                        
+                        st.markdown("</div>", unsafe_allow_html=True)
+                        
+                        # Botones de acción
+                        col_edit, col_move, col_delete = st.columns([1, 2, 1])
+                        
+                        with col_edit:
+                            if st.button("✏️", key=f"edit_{demo['id']}", help="Editar"):
+                                st.session_state[f"editing_{demo['id']}"] = True
+                        
+                        with col_move:
+                            nuevo_estado = st.selectbox(
+                                "Mover a:",
+                                [s for s in estados_keys if s != estado],
+                                key=f"move_{demo['id']}",
+                                label_visibility="collapsed"
+                            )
+                            if st.button("Mover", key=f"move_btn_{demo['id']}"):
+                                demos.cambiar_estado_demo(conn, demo['id'], nuevo_estado)
+                                st.success(f"Demo movida a {estados[nuevo_estado]['title']}")
+                                st.rerun()
+                        
+                        with col_delete:
+                            if st.button("🗑️", key=f"delete_{demo['id']}", help="Eliminar"):
+                                demos.delete_demo(conn, demo['id'])
+                                st.success("Demo eliminada")
+                                st.rerun()
+                        
+                        # Modal de edición
+                        if st.session_state.get(f"editing_{demo['id']}", False):
+                            with st.form(f"edit_demo_{demo['id']}"):
+                                st.markdown(f"### Editando: {demo['titulo']}")
+                                
+                                nuevo_titulo = st.text_input("Título", value=demo['titulo'])
+                                nueva_descripcion = st.text_area("Descripción", value=demo['descripcion'] or "")
+                                nueva_prioridad = st.selectbox("Prioridad", ["baja", "media", "alta"], 
+                                                             index=["baja", "media", "alta"].index(demo['prioridad']))
+                                
+                                # Selector de institución para edición
+                                inst_actual = demo['institucion_nombre'] if demo['institucion_nombre'] else "Sin asignar"
+                                inst_index = 0
+                                if inst_actual != "Sin asignar":
+                                    for idx, inst_opt in enumerate(inst_options):
+                                        if inst_actual in inst_opt:
+                                            inst_index = idx
+                                            break
+                                
+                                nueva_institucion = st.selectbox("Institución", inst_options, index=inst_index)
+                                nuevo_responsable = st.text_input("Responsable", value=demo['responsable'] or "")
+                                
+                                col_save, col_cancel = st.columns(2)
+                                with col_save:
+                                    if st.form_submit_button("Guardar cambios", type="primary"):
+                                        # Procesar nueva institución
+                                        nueva_institucion_id = None
+                                        if nueva_institucion != "Sin asignar":
+                                            for inst in insts:
+                                                if f"{inst['nombre']} (ID: {inst['id']})" == nueva_institucion:
+                                                    nueva_institucion_id = inst['id']
+                                                    break
+                                        
+                                        demos.update_demo(conn, demo['id'],
+                                                        titulo=nuevo_titulo,
+                                                        descripcion=nueva_descripcion,
+                                                        prioridad=nueva_prioridad,
+                                                        institucion_id=nueva_institucion_id,
+                                                        responsable=nuevo_responsable if nuevo_responsable else None)
+                                        
+                                        del st.session_state[f"editing_{demo['id']}"]
+                                        st.success("Demo actualizada exitosamente!")
+                                        st.rerun()
+                                
+                                with col_cancel:
+                                    if st.form_submit_button("Cancelar"):
+                                        del st.session_state[f"editing_{demo['id']}"]
+                                        st.rerun()
+
 def dashboard_selector(conn):
     st.sidebar.markdown("## Gestión de datos")
     seccion = st.sidebar.selectbox(
         "Selecciona módulo",
-        ["Dashboard", "Usuarios", "Instituciones", "Participantes", "Fases Completadas"]
+        ["Dashboard", "Usuarios", "Instituciones", "Participantes", "Fases Completadas", "Gestión de Demos"]
     )
     if seccion == "Dashboard":
         st.header("Resumen")
         data = get_dashboard_data(conn, None)
-        st.metric("Instituciones", data["instituciones"])
-        st.metric("Participantes", data["participantes"])
-        st.metric("Fases Completadas", data["fases_completadas"])
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Instituciones", data["instituciones"])
+        with col2:
+            st.metric("Participantes", data["participantes"])
+        with col3:
+            st.metric("Fases Completadas", data["fases_completadas"])
+        with col4:
+            # Añadir métricas de demos
+            try:
+                demo_stats = demos.get_demos_estadisticas(conn)
+                st.metric("Demos Activas", demo_stats["total"])
+            except:
+                st.metric("Demos Activas", 0)
     elif seccion == "Usuarios":
         crud_usuarios(conn)
     elif seccion == "Instituciones":
@@ -267,3 +501,5 @@ def dashboard_selector(conn):
         crud_participantes(conn)
     elif seccion == "Fases Completadas":
         crud_fases_completadas(conn)
+    elif seccion == "Gestión de Demos":
+        gestión_demos_kanban(conn)
