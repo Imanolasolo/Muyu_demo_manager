@@ -4,7 +4,7 @@ import os
 import hashlib
 import secrets
 from jose import jwt, JWTError
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from modules import dashboard
 # Importa dashboards por rol
@@ -48,9 +48,11 @@ def get_db():
     return conn
 
 def get_user_by_email(conn, email: str):
+    conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT * FROM usuarios WHERE email = ?", (email,))
-    return cur.fetchone()
+    result = cur.fetchone()
+    return dict(result) if result else None
 
 def verify_password(plain_password, hashed_password):
     """
@@ -86,7 +88,7 @@ def migrate_admin_password():
 
 def create_access_token(data: dict, expires_delta=None):
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=15))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -101,12 +103,15 @@ def login(email, password):
     conn = get_db()
     user = get_user_by_email(conn, email)
     conn.close()
+    
     if not user:
         return None
+    
     # Use safe password verification from auth_utils
     from auth_utils import verify_password as safe_verify_password
     if not safe_verify_password(password, user["password"]):
         return None
+    
     token = create_access_token({"sub": user["email"], "rol": user["rol"]}, timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     return token, user
 
