@@ -1,5 +1,12 @@
 def show(st, conn, user):
     st.title("Dashboard Comercial")
+    st.sidebar.markdown(f"**Bienvenido/a:** {user['nombre']}")
+    st.sidebar.markdown(f"**Rol:** {user['rol'].capitalize()}")
+    if st.sidebar.button("Cerrar sesión", key="cerrar_sesion_sidebar"):
+        st.session_state.token = None
+        st.session_state.user = None
+        st.sidebar.success("Sesión cerrada")
+        st.rerun()
     from cruds import demos
     import streamlit as st
     import math
