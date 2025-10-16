@@ -9,6 +9,7 @@ Pillow
 plotly
 altair
 python-dotenv
+openpyxl
 
 
 
