@@ -99,7 +99,7 @@ def crud_usuarios(conn):
 
 def crud_instituciones(conn):
     st.subheader("Instituciones")
-    action = st.selectbox("Acción", ["Listar", "Crear", "Actualizar", "Eliminar"], key="instituciones_action")
+    action = st.selectbox("Acción", ["Listar", "Crear", "Actualizar", "Eliminar", "Cargar masivamente"], key="instituciones_action")
     if action == "Listar":
         data = instituciones.list_instituciones(conn)
         st.dataframe([dict(row) for row in data])
@@ -139,6 +139,64 @@ def crud_instituciones(conn):
         else:
             st.info("No hay instituciones para actualizar.")
     elif action == "Eliminar":
+        # Seleccionar institución por nombre
+        data = instituciones.list_instituciones(conn)
+        inst_dict = {f"{row['nombre']} (ID {row['id']})": row['id'] for row in data}
+        inst_names = list(inst_dict.keys())
+        if inst_names:
+            selected_inst = st.selectbox("Selecciona institución", inst_names, key="del_inst_select")
+            inst_id = inst_dict[selected_inst]
+            if st.button("Eliminar institución"):
+                instituciones.delete_institucion(conn, inst_id)
+                st.success("Institución eliminada")
+        else:
+            st.info("No hay instituciones para eliminar.")
+    elif action == "Cargar masivamente":
+        st.info("Sube un archivo Excel (.xlsx) o CSV con los datos de las instituciones. El archivo debe tener las columnas: nombre, responsable, email_responsable, telefono_responsable.")
+        necesita_plantilla = st.checkbox("¿Necesitas una plantilla para rellenar?")
+        if necesita_plantilla:
+            import pandas as pd
+            import io
+            plantilla = pd.DataFrame({
+                "nombre": ["Institución Ejemplo 1", "Institución Ejemplo 2"],
+                "responsable": ["Responsable 1", "Responsable 2"],
+                "email_responsable": ["email1@ejemplo.com", "email2@ejemplo.com"],
+                "telefono_responsable": ["123456789", "987654321"]
+            })
+            buffer = io.BytesIO()
+            plantilla.to_excel(buffer, index=False)
+            buffer.seek(0)
+            st.download_button(
+                label="Descargar plantilla Excel",
+                data=buffer,
+                file_name="plantilla_instituciones.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        uploaded_file = st.file_uploader("Selecciona el archivo", type=["xlsx", "csv"], key="instituciones_bulk_upload")
+        if uploaded_file is not None:
+            import pandas as pd
+            try:
+                if uploaded_file.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    df = pd.read_excel(uploaded_file)
+                required_cols = {"nombre", "responsable", "email_responsable", "telefono_responsable"}
+                if not required_cols.issubset(df.columns):
+                    st.error(f"El archivo debe contener las columnas: {', '.join(required_cols)}")
+                else:
+                    count = 0
+                    for _, row in df.iterrows():
+                        instituciones.create_institucion(
+                            conn,
+                            row["nombre"],
+                            row["responsable"],
+                            row["email_responsable"],
+                            row["telefono_responsable"]
+                        )
+                        count += 1
+                    st.success(f"Se cargaron {count} instituciones correctamente.")
+            except Exception as e:
+                st.error(f"Error al procesar el archivo: {e}")
         # Seleccionar institución por nombre
         data = instituciones.list_instituciones(conn)
         inst_dict = {f"{row['nombre']} (ID {row['id']})": row['id'] for row in data}
@@ -545,26 +603,21 @@ def gestión_demos_kanban(conn):
                         # Crear tarjeta expandible para cada demo
                         prioridad_color = {"alta": "#DC3545", "media": "#FFC107", "baja": "#6C757D"}
                         prioridad_icon = {"alta": "🔴", "media": "🟡", "baja": "🟢"}
-                        
                         # Título del expander con información resumida
                         titulo_expander = f"{prioridad_icon[demo['prioridad']]} {demo['titulo']}"
                         if demo['responsable']:
                             titulo_expander += f" | 👤 {demo['responsable']}"
-                        
                         with st.expander(titulo_expander, expanded=False):
                             # Crear formulario de edición dentro del expander
                             with st.form(f"demo_form_{demo['id']}"):
                                 st.markdown(f"**📝 Demo ID:** {demo['id']}")
-                            
                                 # Campos editables
                                 col1, col2 = st.columns(2)
-                                
                                 with col1:
                                     nuevo_titulo = st.text_input("📌 Título:", value=demo['titulo'], key=f"titulo_{demo['id']}")
                                     nueva_prioridad = st.selectbox("⚡ Prioridad:", ["baja", "media", "alta"], 
                                                                  index=["baja", "media", "alta"].index(demo['prioridad']),
                                                                  key=f"prioridad_{demo['id']}")
-                                    
                                     # Selector de institución
                                     insts = instituciones.list_instituciones(conn)
                                     inst_options = ["Sin asignar"] + [f"{inst['nombre']} (ID: {inst['id']})" for inst in insts]
@@ -576,10 +629,11 @@ def gestión_demos_kanban(conn):
                                                 inst_index = idx
                                                 break
                                     nueva_institucion = st.selectbox("🏫 Institución:", inst_options, index=inst_index, key=f"inst_{demo['id']}")
-                                
+                                    # Campo editable Estado
+                                    estado_actual = demo.get('estado', '')
+                                    nuevo_estado = st.text_input("Estado", value=estado_actual or "", key=f"estado_{demo['id']}")
                                 with col2:
                                     nuevo_responsable = st.text_input("👤 Responsable:", value=demo['responsable'] or "", key=f"resp_{demo['id']}")
-                                    
                                     # Selector de fase
                                     todas_las_fases_form = demos.get_fases_disponibles(conn)
                                     fase_names = [f['nombre'] for f in todas_las_fases_form]
@@ -590,7 +644,6 @@ def gestión_demos_kanban(conn):
                                         except ValueError:
                                             pass
                                     nueva_fase_sel = st.selectbox("📋 Fase:", fase_names, index=fase_actual_index, key=f"fase_{demo['id']}")
-                                    
                                     # Fecha límite
                                     fecha_actual = None
                                     if demo.get('fecha_limite'):
@@ -599,10 +652,8 @@ def gestión_demos_kanban(conn):
                                         except:
                                             pass
                                     nueva_fecha_limite = st.date_input("📅 Fecha límite:", value=fecha_actual, key=f"fecha_{demo['id']}")
-                                
                                 # Descripción completa
                                 nueva_descripcion = st.text_area("📄 Descripción:", value=demo['descripcion'] or "", height=100, key=f"desc_{demo['id']}")
-                            
                                 # Información adicional (solo lectura)
                                 col_info1, col_info2 = st.columns(2)
                                 with col_info1:
@@ -611,7 +662,6 @@ def gestión_demos_kanban(conn):
                                 with col_info2:
                                     if demo.get('fecha_actualizacion'):
                                         st.info(f"🔄 Actualizado: {demo['fecha_actualizacion']}")
-                                
                                 # Mostrar días restantes si hay fecha límite
                                 if nueva_fecha_limite:
                                     dias_restantes = (nueva_fecha_limite - datetime.date.today()).days
@@ -623,10 +673,8 @@ def gestión_demos_kanban(conn):
                                         st.warning(f"⏳ Vence en {dias_restantes} días")
                                     else:
                                         st.success(f"✅ {dias_restantes} días restantes")
-                                
                                 # Botones de acción
                                 col_save, col_move, col_delete = st.columns(3)
-                            
                                 with col_save:
                                     if st.form_submit_button("💾 Guardar Cambios", type="primary", use_container_width=True):
                                         # Procesar nueva institución
@@ -636,15 +684,13 @@ def gestión_demos_kanban(conn):
                                                 if f"{inst['nombre']} (ID: {inst['id']})" == nueva_institucion:
                                                     nueva_institucion_id = inst['id']
                                                     break
-                                        
                                         # Procesar nueva fase
                                         nueva_fase_id = None
                                         for f in todas_las_fases_form:
                                             if f['nombre'] == nueva_fase_sel:
                                                 nueva_fase_id = f['id']
                                                 break
-                                        
-                                        # Actualizar demo
+                                        # Actualizar demo (incluye estado)
                                         demos.update_demo(conn, demo['id'],
                                                         titulo=nuevo_titulo,
                                                         descripcion=nueva_descripcion,
@@ -652,11 +698,10 @@ def gestión_demos_kanban(conn):
                                                         fase_id=nueva_fase_id,
                                                         institucion_id=nueva_institucion_id,
                                                         responsable=nuevo_responsable if nuevo_responsable else None,
-                                                        fecha_limite=nueva_fecha_limite.strftime('%Y-%m-%d') if nueva_fecha_limite else None)
-                                        
+                                                        fecha_limite=nueva_fecha_limite.strftime('%Y-%m-%d') if nueva_fecha_limite else None,
+                                                        estado=nuevo_estado)
                                         st.success("✅ Demo actualizada exitosamente!")
                                         st.rerun()
-                                
                                 with col_move:
                                     # Mover a otra fase
                                     otras_fases = [f for f in todas_las_fases_form if f['nombre'] != nueva_fase_sel]
@@ -666,7 +711,6 @@ def gestión_demos_kanban(conn):
                                         demos.cambiar_fase_demo(conn, demo['id'], siguiente_fase['id'])
                                         st.success(f"📋 Demo movida a: {siguiente_fase['nombre']}")
                                         st.rerun()
-                                
                                 with col_delete:
                                     if st.form_submit_button("🗑️ Eliminar", type="secondary", use_container_width=True):
                                         demos.delete_demo(conn, demo['id'])

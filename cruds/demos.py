@@ -2,7 +2,7 @@ import sqlite3
 from typing import List, Dict, Optional
 
 def create_demo(conn, titulo: str, descripcion: str = None, fase_id: int = None, 
-                institucion_id: int = None, responsable: str = None, prioridad: str = "media"):
+                institucion_id: int = None, responsable: str = None, prioridad: str = "media", estado: str = "pendiente"):
     """Crear una nueva demo"""
     cur = conn.cursor()
     # Si no se especifica fase, usar la primera fase disponible
@@ -10,11 +10,10 @@ def create_demo(conn, titulo: str, descripcion: str = None, fase_id: int = None,
         cur.execute("SELECT id FROM fases ORDER BY orden LIMIT 1")
         result = cur.fetchone()
         fase_id = result['id'] if result else 1
-    
     cur.execute("""
-        INSERT INTO demos (titulo, descripcion, fase_id, institucion_id, responsable, prioridad)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (titulo, descripcion, fase_id, institucion_id, responsable, prioridad))
+        INSERT INTO demos (titulo, descripcion, estado, fase_id, institucion_id, responsable, prioridad)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (titulo, descripcion, estado, fase_id, institucion_id, responsable, prioridad))
     conn.commit()
     return cur.lastrowid
 
@@ -53,7 +52,7 @@ def update_demo(conn, demo_id: int, **kwargs):
     values = []
     
     for key, value in kwargs.items():
-        if key in ['titulo', 'descripcion', 'fase_id', 'institucion_id', 'responsable', 'prioridad', 'fecha_limite']:
+        if key in ['titulo', 'descripcion', 'fase_id', 'institucion_id', 'responsable', 'prioridad', 'fecha_limite', 'estado']:
             set_clauses.append(f"{key} = ?")
             values.append(value)
     
