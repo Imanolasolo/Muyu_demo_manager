@@ -40,7 +40,17 @@ def create_tables():
     )
     """)
 
-    # Tabla de instituciones educativas
+
+    # Tabla de agrupadores
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS agrupadores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL,
+        descripcion TEXT
+    )
+    """)
+
+    # Tabla de instituciones educativas (ahora con agrupador_id)
     c.execute("""
     CREATE TABLE IF NOT EXISTS instituciones (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,7 +60,9 @@ def create_tables():
         telefono_responsable TEXT,
         estado TEXT DEFAULT 'en_progreso',
         fecha_inicio DATE DEFAULT CURRENT_DATE,
-        fecha_fin DATE
+        fecha_fin DATE,
+        agrupador_id INTEGER,
+        FOREIGN KEY (agrupador_id) REFERENCES agrupadores(id) ON DELETE SET NULL
     )
     """)
 

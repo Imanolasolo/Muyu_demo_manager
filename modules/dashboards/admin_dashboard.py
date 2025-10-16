@@ -8,6 +8,7 @@ def show(st, conn, user):
     menu_options = [
         "Gestión de Usuarios",
         "Gestión de Instituciones",
+        "Gestión de Agrupadores",
         "Gestión de Participantes",
         "Gestión de Fases",
         "Gestión de Demos",
@@ -19,6 +20,8 @@ def show(st, conn, user):
         crud_usuarios(conn)
     elif choice == "Gestión de Instituciones":
         crud_instituciones(conn)
+    elif choice == "Gestión de Agrupadores":
+        crud_agrupadores(conn)
     elif choice == "Gestión de Participantes":
         crud_participantes(conn)
     elif choice == "Gestión de Fases":
@@ -157,8 +160,163 @@ def crud_instituciones(conn):
         data = instituciones.list_instituciones(conn)
         st.dataframe([dict(row) for row in data])
     elif action == "Crear":
-        with st.form("crear_institucion"):
-            nombre = st.text_input("Nombre institución")
+        nombre = st.text_input("Nombre institución")
+        responsable = st.text_input("Responsable")
+        email_responsable = st.text_input("Email responsable")
+        telefono_responsable = st.text_input("Teléfono responsable")
+        ciudad = st.text_input("Ciudad")
+        pais = st.text_input("País")
+        # Dropdown de responsable comercial
+        usuarios_comerciales = [u for u in usuarios.list_usuarios(conn) if u['rol'] == 'comercial']
+        opciones_resp_com = [f"{u['nombre']} ({u['email']})" for u in usuarios_comerciales]
+        responsable_comercial = st.selectbox("Responsable comercial", opciones_resp_com) if opciones_resp_com else None
+        submitted = st.button("Crear")
+        if submitted:
+            resp_com_val = None
+            if responsable_comercial:
+                # Guardar solo el nombre del usuario comercial
+                resp_com_val = responsable_comercial.split(' (')[0]
+            instituciones.create_institucion(conn, nombre, responsable, email_responsable, telefono_responsable, ciudad=ciudad, pais=pais, responsable_comercial=resp_com_val)
+            st.success("Institución creada")
+    elif action == "Actualizar":
+        # Seleccionar institución por nombre
+        data = instituciones.list_instituciones(conn)
+        inst_dict = {f"{row['nombre']} (ID {row['id']})": row['id'] for row in data}
+        inst_names = list(inst_dict.keys())
+        if inst_names:
+            selected_inst = st.selectbox("Selecciona institución", inst_names, key="upd_inst_select")
+            inst_id = inst_dict[selected_inst]
+            nombre = st.text_input("Nuevo nombre", key="upd_inst_nombre")
+            responsable = st.text_input("Nuevo responsable", key="upd_inst_resp")
+            email_responsable = st.text_input("Nuevo email responsable", key="upd_inst_email")
+            telefono_responsable = st.text_input("Nuevo teléfono responsable", key="upd_inst_tel")
+            estado = st.text_input("Nuevo estado", key="upd_inst_estado")
+            if st.button("Actualizar institución"):
+                fields = {}
+                if nombre: fields["nombre"] = nombre
+                if responsable: fields["responsable"] = responsable
+                if email_responsable: fields["email_responsable"] = email_responsable
+                if telefono_responsable: fields["telefono_responsable"] = telefono_responsable
+                if estado: fields["estado"] = estado
+                if fields:
+                    instituciones.update_institucion(conn, inst_id, **fields)
+                    st.success("Institución actualizada")
+        else:
+            st.info("No hay instituciones para actualizar.")
+    elif action == "Eliminar":
+        # Seleccionar institución por nombre
+        data = instituciones.list_instituciones(conn)
+        inst_dict = {f"{row['nombre']} (ID {row['id']})": row['id'] for row in data}
+        inst_names = list(inst_dict.keys())
+        if inst_names:
+            selected_inst = st.selectbox("Selecciona institución", inst_names, key="del_inst_select")
+            inst_id = inst_dict[selected_inst]
+            if st.button("Eliminar institución"):
+                instituciones.delete_institucion(conn, inst_id)
+                st.success("Institución eliminada")
+        else:
+            st.info("No hay instituciones para eliminar.")
+    elif action == "Cargar masivamente":
+        st.info("Sube un archivo Excel (.xlsx) o CSV con los datos de las instituciones. El archivo debe tener las columnas: nombre, responsable, email_responsable, telefono_responsable.")
+        necesita_plantilla = st.checkbox("¿Necesitas una plantilla para rellenar?")
+        if necesita_plantilla:
+            import pandas as pd
+            import io
+            plantilla = pd.DataFrame({
+                "nombre": ["Institución Ejemplo 1", "Institución Ejemplo 2"],
+                "responsable": ["Responsable 1", "Responsable 2"],
+                "email_responsable": ["email1@ejemplo.com", "email2@ejemplo.com"],
+                "telefono_responsable": ["123456789", "987654321"]
+            })
+            buffer = io.BytesIO()
+            plantilla.to_excel(buffer, index=False)
+            buffer.seek(0)
+            st.download_button(
+                label="Descargar plantilla Excel",
+                data=buffer,
+                file_name="plantilla_instituciones.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        uploaded_file = st.file_uploader("Selecciona el archivo", type=["xlsx", "csv"], key="instituciones_bulk_upload")
+        if uploaded_file is not None:
+            import pandas as pd
+            try:
+                if uploaded_file.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    df = pd.read_excel(uploaded_file)
+                required_cols = {"nombre", "responsable", "email_responsable", "telefono_responsable"}
+                if not required_cols.issubset(df.columns):
+                    st.error(f"El archivo debe contener las columnas: {', '.join(required_cols)}")
+                else:
+                    count = 0
+                    for _, row in df.iterrows():
+                        instituciones.create_institucion(
+                            conn,
+                            row["nombre"],
+                            row["responsable"],
+                            row["email_responsable"],
+                            row["telefono_responsable"]
+                        )
+                        count += 1
+                    st.success(f"Se cargaron {count} instituciones correctamente.")
+            except Exception as e:
+                st.error(f"Error al procesar el archivo: {e}")
+def crud_agrupadores(conn):
+    from cruds import agrupadores
+    st.subheader("Agrupadores")
+    action = st.selectbox("Acción", ["Listar", "Crear", "Actualizar", "Eliminar"], key="agrupadores_action")
+    if action == "Listar":
+        data = agrupadores.list_agrupadores(conn)
+        st.dataframe([dict(row) for row in data])
+    elif action == "Crear":
+        from cruds import instituciones as cruds_instituciones
+        with st.form("crear_agrupador"):
+            nombre = st.text_input("Nombre del Agrupador")
+            descripcion = st.text_area("Descripción")
+            # Selección de instituciones sin agrupador
+            instituciones_sin_agrupador = [row for row in cruds_instituciones.list_instituciones(conn) if not row['agrupador_id']]
+            opciones_insts = [f"{row['nombre']} (ID {row['id']})" for row in instituciones_sin_agrupador]
+            instituciones_seleccionadas = st.multiselect("Asignar instituciones (opcional)", opciones_insts)
+            submitted = st.form_submit_button("Crear")
+            if submitted and nombre:
+                agrupador_id = agrupadores.create_agrupador(conn, nombre, descripcion)
+                # Asignar instituciones seleccionadas
+                for inst in instituciones_seleccionadas:
+                    for row in instituciones_sin_agrupador:
+                        if f"{row['nombre']} (ID {row['id']})" == inst:
+                            cruds_instituciones.update_institucion(conn, row['id'], agrupador_id=agrupador_id)
+                st.success("Agrupador creado y asignación realizada")
+    elif action == "Actualizar":
+        data = agrupadores.list_agrupadores(conn)
+        agr_dict = {f"{row['nombre']} (ID {row['id']})": row['id'] for row in data}
+        agr_names = list(agr_dict.keys())
+        if agr_names:
+            selected_agr = st.selectbox("Selecciona agrupador", agr_names, key="upd_agr_select")
+            agr_id = agr_dict[selected_agr]
+            nombre = st.text_input("Nuevo nombre", key="upd_agr_nombre")
+            descripcion = st.text_area("Nueva descripción", key="upd_agr_desc")
+            if st.button("Actualizar agrupador"):
+                fields = {}
+                if nombre: fields["nombre"] = nombre
+                if descripcion: fields["descripcion"] = descripcion
+                if fields:
+                    agrupadores.update_agrupador(conn, agr_id, **fields)
+                    st.success("Agrupador actualizado")
+        else:
+            st.info("No hay agrupadores para actualizar.")
+    elif action == "Eliminar":
+        data = agrupadores.list_agrupadores(conn)
+        agr_dict = {f"{row['nombre']} (ID {row['id']})": row['id'] for row in data}
+        agr_names = list(agr_dict.keys())
+        if agr_names:
+            selected_agr = st.selectbox("Selecciona agrupador", agr_names, key="del_agr_select")
+            agr_id = agr_dict[selected_agr]
+            if st.button("Eliminar agrupador"):
+                agrupadores.delete_agrupador(conn, agr_id)
+                st.success("Agrupador eliminado")
+        else:
+            st.info("No hay agrupadores para eliminar.")
             responsable = st.text_input("Responsable")
             email_responsable = st.text_input("Email responsable")
             telefono_responsable = st.text_input("Teléfono responsable")
