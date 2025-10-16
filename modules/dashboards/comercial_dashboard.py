@@ -23,8 +23,8 @@ def show(st, conn, user):
     end = start+page_size
     demos_pagina = demos_usuario[start:end]
 
-    # Mostrar como tarjetas sencillas tipo Kanban con campo editable 'Estado'
-    if demos_pagina:
+    # Mostrar como tarjetas sencillas tipo Kanban con campo editable 'Estado' solo si hay demos
+    if demos_pagina and len(demos_pagina) > 0:
         for demo in demos_pagina:
             with st.container():
                 st.markdown(f"""
@@ -43,6 +43,17 @@ def show(st, conn, user):
                     if st.button("Guardar estado", key=f"guardar_estado_{demo['id']}"):
                         demos.update_demo(conn, demo['id'], estado=nuevo_estado)
                         st.success("Estado actualizado")
+
+                # Checklist de tareas asignadas
+                from cruds import tareas_demo
+                tareas = tareas_demo.listar_tareas_demo(conn, demo['id'])
+                if tareas:
+                    st.markdown("**Tareas asignadas:**")
+                    for tarea in tareas:
+                        checked = st.checkbox(tarea['descripcion'], value=bool(tarea['completada']), key=f"tarea_{tarea['id']}")
+                        if checked != bool(tarea['completada']):
+                            tareas_demo.marcar_tarea_completada(conn, tarea['id'], checked)
+                            st.success("Tarea actualizada")
+                            st.rerun()
         st.caption(f"Mostrando {start+1}-{min(end,total)} de {total} demos")
-    else:
-        st.info("No hay demos asignadas para mostrar.")
+    # Si no hay demos, no mostrar nada extra (solo el filtro)

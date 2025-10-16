@@ -1,10 +1,10 @@
 import sqlite3
 
-def create_institucion(conn, nombre, responsable, email_responsable, telefono_responsable=None, estado='en_progreso', fecha_inicio=None, fecha_fin=None):
+def create_institucion(conn, nombre, responsable, email_responsable, telefono_responsable=None, estado='en_progreso', fecha_inicio=None, fecha_fin=None, ciudad=None, pais=None, responsable_comercial=None):
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO instituciones (nombre, responsable, email_responsable, telefono_responsable, estado, fecha_inicio, fecha_fin) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (nombre, responsable, email_responsable, telefono_responsable, estado, fecha_inicio, fecha_fin)
+        "INSERT INTO instituciones (nombre, responsable, email_responsable, telefono_responsable, estado, fecha_inicio, fecha_fin, ciudad, pais, responsable_comercial) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (nombre, responsable, email_responsable, telefono_responsable, estado, fecha_inicio, fecha_fin, ciudad, pais, responsable_comercial)
     )
     conn.commit()
     return cur.lastrowid

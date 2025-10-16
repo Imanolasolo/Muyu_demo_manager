@@ -2,7 +2,7 @@ import sqlite3
 from typing import List, Dict, Optional
 
 def create_demo(conn, titulo: str, descripcion: str = None, fase_id: int = None, 
-                institucion_id: int = None, responsable: str = None, prioridad: str = "media", estado: str = "pendiente"):
+                institucion_id: int = None, responsable: str = None, prioridad: str = "media", estado: str = "pendiente", fecha_limite: str = None):
     """Crear una nueva demo"""
     cur = conn.cursor()
     # Si no se especifica fase, usar la primera fase disponible
@@ -11,9 +11,9 @@ def create_demo(conn, titulo: str, descripcion: str = None, fase_id: int = None,
         result = cur.fetchone()
         fase_id = result['id'] if result else 1
     cur.execute("""
-        INSERT INTO demos (titulo, descripcion, estado, fase_id, institucion_id, responsable, prioridad)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (titulo, descripcion, estado, fase_id, institucion_id, responsable, prioridad))
+        INSERT INTO demos (titulo, descripcion, estado, fase_id, institucion_id, responsable, prioridad, fecha_limite)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (titulo, descripcion, estado, fase_id, institucion_id, responsable, prioridad, fecha_limite))
     conn.commit()
     return cur.lastrowid
 

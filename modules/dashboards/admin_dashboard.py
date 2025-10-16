@@ -1,10 +1,18 @@
 import streamlit as st
 from cruds import instituciones, participantes, usuarios, demos
 import datetime
+from cruds import tareas_demo
 def show(st, conn, user):
     st.title("Dashboard Administrador")
     st.sidebar.title("Menú")
-    menu_options = ["Gestión de Usuarios", "Gestión de Instituciones", "Gestión de Participantes", "Gestión de Fases", "Gestión de Demos"]
+    menu_options = [
+        "Gestión de Usuarios",
+        "Gestión de Instituciones",
+        "Gestión de Participantes",
+        "Gestión de Fases",
+        "Gestión de Demos",
+        "Alertas y Tareas"
+    ]
     choice = st.sidebar.selectbox("Selecciona una opción", menu_options)
 
     if choice == "Gestión de Usuarios":
@@ -17,6 +25,51 @@ def show(st, conn, user):
         crud_fases(conn)
     elif choice == "Gestión de Demos":
         gestión_demos_kanban(conn)
+    elif choice == "Alertas y Tareas":
+        st.header("🔔 Alertas y Tareas")
+        # Mostrar alertas de cambios de estado en demos
+        st.subheader("Cambios recientes de estado en Demos")
+        demos_cambiadas = demos.list_demos(conn)
+        alertas = []
+        for demo in demos_cambiadas:
+            if demo.get('fecha_actualizacion') and demo.get('estado') and demo.get('fecha_actualizacion') != demo.get('fecha_creacion'):
+                fecha_str = demo['fecha_actualizacion']
+                if ' ' in fecha_str:
+                    fecha_str = fecha_str.split(' ')[0]
+                alerta = {
+                    'fecha': fecha_str,
+                    'demo': demo['titulo'],
+                    'responsable': demo.get('responsable', 'N/A'),
+                    'estado': demo['estado']
+                }
+                alertas.append(alerta)
+        if alertas:
+            for alerta in alertas[:20]:
+                st.warning(f"[{alerta['fecha']}] Demo: '{alerta['demo']}' | Responsable: {alerta['responsable']}\nNuevo estado: {alerta['estado']}")
+        else:
+            st.info("No hay cambios recientes de estado en las demos.")
+
+        # --- NUEVO: Resumen de tareas de demos ---
+        st.subheader("Tareas asignadas a responsables comerciales")
+        todas_demos = demos.list_demos(conn)
+        tareas_totales = []
+        for demo in todas_demos:
+            tareas = tareas_demo.listar_tareas_demo(conn, demo['id'])
+            for tarea in tareas:
+                tareas_totales.append({
+                    'demo': demo['titulo'],
+                    'descripcion': tarea['descripcion'],
+                    'responsable': tarea.get('responsable', 'N/A'),
+                    'completada': tarea['completada'],
+                    'fecha_completada': tarea.get('fecha_completada')
+                })
+        if tareas_totales:
+            for tarea in tareas_totales:
+                estado = "✅ Completada" if tarea['completada'] else "⬜ Pendiente"
+                fecha_comp = f" | Fecha completada: {tarea['fecha_completada'].split(' ')[0]}" if tarea['completada'] and tarea['fecha_completada'] else ""
+                st.info(f"Demo: '{tarea['demo']}' | Responsable: {tarea['responsable']}\nTarea: {tarea['descripcion']}\nEstado: {estado}{fecha_comp}")
+        else:
+            st.info("No hay tareas asignadas a responsables comerciales.")
 
 
 def get_dashboard_data(conn, user):
@@ -109,9 +162,19 @@ def crud_instituciones(conn):
             responsable = st.text_input("Responsable")
             email_responsable = st.text_input("Email responsable")
             telefono_responsable = st.text_input("Teléfono responsable")
+            ciudad = st.text_input("Ciudad")
+            pais = st.text_input("País")
+            # Dropdown de responsable comercial
+            usuarios_comerciales = [u for u in usuarios.list_usuarios(conn) if u['rol'] == 'comercial']
+            opciones_resp_com = [f"{u['nombre']} ({u['email']})" for u in usuarios_comerciales]
+            responsable_comercial = st.selectbox("Responsable comercial", opciones_resp_com) if opciones_resp_com else None
             submitted = st.form_submit_button("Crear")
             if submitted:
-                instituciones.create_institucion(conn, nombre, responsable, email_responsable, telefono_responsable)
+                resp_com_val = None
+                if responsable_comercial:
+                    # Guardar solo el nombre del usuario comercial
+                    resp_com_val = responsable_comercial.split(' (')[0]
+                instituciones.create_institucion(conn, nombre, responsable, email_responsable, telefono_responsable, ciudad=ciudad, pais=pais, responsable_comercial=resp_com_val)
                 st.success("Institución creada")
     elif action == "Actualizar":
         # Seleccionar institución por nombre
@@ -421,7 +484,9 @@ def gestión_demos_kanban(conn):
                         fase_id = fase['id']
                         break
                 
-                demos.create_demo(conn, titulo, descripcion, fase_id, institucion_id, responsable, prioridad)
+                # Formatear fecha_limite como string YYYY-MM-DD si está definida
+                fecha_limite_str = fecha_limite.strftime('%Y-%m-%d') if fecha_limite else None
+                demos.create_demo(conn, titulo, descripcion, fase_id, institucion_id, responsable, prioridad, fecha_limite=fecha_limite_str)
                 st.success("Demo creada exitosamente!")
                 st.rerun()
     
@@ -443,13 +508,12 @@ def gestión_demos_kanban(conn):
     col_filtros1, col_filtros2, col_filtros3 = st.columns(3)
     
     with col_filtros1:
-        # Filtro para seleccionar qué fases mostrar
+        # Filtro para seleccionar UNA sola fase a mostrar (dropdown)
         nombres_fases = [fase['nombre'] for fase in todas_las_fases]
-        fases_seleccionadas = st.multiselect(
-            "📋 Seleccionar fases a mostrar:",
-            nombres_fases,
-            default=nombres_fases,  # Por defecto todas seleccionadas
-            key="fases_filtro"
+        fase_seleccionada = st.selectbox(
+            "📋 Seleccionar fase a mostrar:",
+            ["Todas"] + nombres_fases,
+            key="fase_filtro"
         )
     
     with col_filtros2:
@@ -463,11 +527,12 @@ def gestión_demos_kanban(conn):
     
     with col_filtros3:
         # Configuración de columnas por fila
-        max_cols = min(len(fases_seleccionadas), 6) if fases_seleccionadas else 4
+        num_fases_filtradas = len(fases_disponibles) if 'fases_disponibles' in locals() else 1
+        max_cols = min(num_fases_filtradas, 6) if num_fases_filtradas else 4
         cols_por_fila = st.selectbox(
             "📱 Columnas por fila:",
             options=[2, 3, 4, 5, 6],
-            index=2,  # 4 columnas por defecto
+            index=min(2, max_cols-2) if max_cols > 2 else 0,  # 4 columnas por defecto si es posible
             key="cols_por_fila"
         )
     
@@ -493,52 +558,59 @@ def gestión_demos_kanban(conn):
             key="busqueda_titulo"
         )
     
-    # Filtrar fases según selección
-    if fases_seleccionadas:
-        fases_disponibles = [fase for fase in todas_las_fases if fase['nombre'] in fases_seleccionadas]
-    else:
+    # Filtrar fases según selección (dropdown)
+    if fase_seleccionada == "Todas":
         fases_disponibles = todas_las_fases
-        st.warning("⚠️ No hay fases seleccionadas. Mostrando todas las fases disponibles.")
-    
+    else:
+        fases_disponibles = [fase for fase in todas_las_fases if fase['nombre'] == fase_seleccionada]
+
+    # Solo mostrar fases que tengan al menos una demo tras aplicar los filtros
+    fases_con_demos = []
+    demos_por_fase = {}
+    for fase in fases_disponibles:
+        demos_fase = demos.list_demos_by_fase(conn, fase['id'])
+        # Aplicar filtros
+        if prioridad_filtro != "Todas":
+            demos_fase = [demo for demo in demos_fase if demo['prioridad'] == prioridad_filtro]
+        if responsable_filtro != "Todos":
+            demos_fase = [demo for demo in demos_fase if demo['responsable'] == responsable_filtro]
+        if busqueda_titulo:
+            demos_fase = [demo for demo in demos_fase if busqueda_titulo.lower() in demo['titulo'].lower()]
+        if demos_fase:
+            fases_con_demos.append(fase)
+            demos_por_fase[fase['id']] = demos_fase
+
     # Mostrar resumen de filtros aplicados
-    if prioridad_filtro != "Todas" or responsable_filtro != "Todos" or busqueda_titulo or len(fases_seleccionadas) != len(todas_las_fases):
+    if prioridad_filtro != "Todas" or responsable_filtro != "Todos" or busqueda_titulo or (fase_seleccionada != "Todas"):
         st.markdown("#### 🎯 Filtros Aplicados:")
         filtros_info = []
-        if len(fases_seleccionadas) != len(todas_las_fases):
-            filtros_info.append(f"📋 Fases: {len(fases_seleccionadas)}/{len(todas_las_fases)} seleccionadas")
+        if fase_seleccionada != "Todas":
+            filtros_info.append(f"📋 Fase: {fase_seleccionada}")
         if prioridad_filtro != "Todas":
             filtros_info.append(f"⚡ Prioridad: {prioridad_filtro}")
         if responsable_filtro != "Todos":
             filtros_info.append(f"👤 Responsable: {responsable_filtro}")
         if busqueda_titulo:
             filtros_info.append(f"🔍 Búsqueda: '{busqueda_titulo}'")
-        
         st.info(" | ".join(filtros_info))
-    
+
     st.divider()
-    
-    # Mostrar fases en grupos según configuración
-    num_fases = len(fases_disponibles)
-    
+
+    num_fases = len(fases_con_demos)
     if num_fases == 0:
         st.info("No hay fases para mostrar con los filtros actuales.")
         return
-    
+
     # Dividir fases en grupos según cols_por_fila
     total_grupos = (num_fases + cols_por_fila - 1) // cols_por_fila
-    
+
     for grupo_idx in range(total_grupos):
         i = grupo_idx * cols_por_fila
-        grupo_fases = fases_disponibles[i:i + cols_por_fila]
-        
-        # Añadir separador entre grupos si hay más de un grupo
-        if grupo_idx > 0:
-            st.markdown("---")
-            st.markdown(f"#### Grupo {grupo_idx + 1}")
-        
+        grupo_fases = fases_con_demos[i:i + cols_por_fila]
+        # Si el grupo no tiene fases con demos, no mostrar nada
+        if not grupo_fases:
+            continue
         cols = st.columns(len(grupo_fases))
-    
-        # Configuración de colores para las fases
         colores_fases = [
             "#007BFF",  # Azul
             "#FFA500",  # Naranja  
@@ -549,14 +621,14 @@ def gestión_demos_kanban(conn):
             "#FFC107",  # Amarillo
             "#6C757D"   # Gris
         ]
-        
         for j, (fase, col) in enumerate(zip(grupo_fases, cols)):
+            # Si no hay demos en la fase, no mostrar nada
+            if not demos_por_fase.get(fase['id']):
+                continue
             with col:
-                # Usar índice global para los colores
                 color_idx = (i + j) % len(colores_fases)
                 color = colores_fases[color_idx]
                 fase_nombre_corto = fase['nombre'][:20] + "..." if len(fase['nombre']) > 20 else fase['nombre']
-                
                 st.markdown(f"""
                     <div style="
                         background-color: {color}20; 
@@ -570,150 +642,125 @@ def gestión_demos_kanban(conn):
                         </h4>
                     </div>
                 """, unsafe_allow_html=True)
-                
-                # Obtener demos de esta fase
-                demos_fase = demos.list_demos_by_fase(conn, fase['id'])
-                
-                # Aplicar filtros
-                if prioridad_filtro != "Todas":
-                    demos_fase = [demo for demo in demos_fase if demo['prioridad'] == prioridad_filtro]
-                
-                if responsable_filtro != "Todos":
-                    demos_fase = [demo for demo in demos_fase if demo['responsable'] == responsable_filtro]
-                
-                if busqueda_titulo:
-                    demos_fase = [demo for demo in demos_fase if busqueda_titulo.lower() in demo['titulo'].lower()]
-                
-                if not demos_fase:
-                    # Mensaje personalizado según filtros activos
-                    filtros_activos = []
-                    if prioridad_filtro != "Todas":
-                        filtros_activos.append(f"prioridad '{prioridad_filtro}'")
-                    if responsable_filtro != "Todos":
-                        filtros_activos.append(f"responsable '{responsable_filtro}'")
-                    if busqueda_titulo:
-                        filtros_activos.append(f"título que contenga '{busqueda_titulo}'")
-                    
-                    if filtros_activos:
-                        st.info(f"No hay demos en esta fase con: {', '.join(filtros_activos)}")
-                    else:
-                        st.info("No hay demos en esta fase")
-                else:
-                    for demo in demos_fase:
-                        # Crear tarjeta expandible para cada demo
-                        prioridad_color = {"alta": "#DC3545", "media": "#FFC107", "baja": "#6C757D"}
-                        prioridad_icon = {"alta": "🔴", "media": "🟡", "baja": "🟢"}
-                        # Título del expander con información resumida
-                        titulo_expander = f"{prioridad_icon[demo['prioridad']]} {demo['titulo']}"
-                        if demo['responsable']:
-                            titulo_expander += f" | 👤 {demo['responsable']}"
-                        with st.expander(titulo_expander, expanded=False):
-                            # Crear formulario de edición dentro del expander
-                            with st.form(f"demo_form_{demo['id']}"):
-                                st.markdown(f"**📝 Demo ID:** {demo['id']}")
-                                # Campos editables
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    nuevo_titulo = st.text_input("📌 Título:", value=demo['titulo'], key=f"titulo_{demo['id']}")
-                                    nueva_prioridad = st.selectbox("⚡ Prioridad:", ["baja", "media", "alta"], 
-                                                                 index=["baja", "media", "alta"].index(demo['prioridad']),
-                                                                 key=f"prioridad_{demo['id']}")
-                                    # Selector de institución
-                                    insts = instituciones.list_instituciones(conn)
-                                    inst_options = ["Sin asignar"] + [f"{inst['nombre']} (ID: {inst['id']})" for inst in insts]
-                                    inst_actual = demo['institucion_nombre'] if demo['institucion_nombre'] else "Sin asignar"
-                                    inst_index = 0
-                                    if inst_actual != "Sin asignar":
-                                        for idx, inst_opt in enumerate(inst_options):
-                                            if inst_actual in inst_opt:
-                                                inst_index = idx
-                                                break
-                                    nueva_institucion = st.selectbox("🏫 Institución:", inst_options, index=inst_index, key=f"inst_{demo['id']}")
-                                    # Campo editable Estado
-                                    estado_actual = demo.get('estado', '')
-                                    nuevo_estado = st.text_input("Estado", value=estado_actual or "", key=f"estado_{demo['id']}")
-                                with col2:
-                                    nuevo_responsable = st.text_input("👤 Responsable:", value=demo['responsable'] or "", key=f"resp_{demo['id']}")
-                                    # Selector de fase
-                                    todas_las_fases_form = demos.get_fases_disponibles(conn)
-                                    fase_names = [f['nombre'] for f in todas_las_fases_form]
-                                    fase_actual_index = 0
-                                    if demo.get('fase_nombre'):
+                for demo in demos_por_fase[fase['id']]:
+                    prioridad_color = {"alta": "#DC3545", "media": "#FFC107", "baja": "#6C757D"}
+                    prioridad_icon = {"alta": "🔴", "media": "🟡", "baja": "🟢"}
+                    titulo_expander = f"{prioridad_icon[demo['prioridad']]} {demo['titulo']}"
+                    if demo['responsable']:
+                        titulo_expander += f" | 👤 {demo['responsable']}"
+                    with st.expander(titulo_expander, expanded=False):
+                        # --- TAREAS PARA EL RESPONSABLE COMERCIAL ---
+                        st.markdown("**📝 Tareas para el Responsable Comercial:**")
+                        tareas = tareas_demo.listar_tareas_demo(conn, demo['id'])
+                        for tarea in tareas:
+                            estado = "✅" if tarea['completada'] else "⬜"
+                            st.write(f"{estado} {tarea['descripcion']}")
+                        with st.form(f"form_nueva_tarea_{demo['id']}", clear_on_submit=True):
+                            nueva_tarea = st.text_input("Agregar nueva tarea para el responsable comercial:")
+                            submitted_tarea = st.form_submit_button("Agregar tarea")
+                            if submitted_tarea and nueva_tarea.strip():
+                                tareas_demo.crear_tarea_demo(conn, demo['id'], nueva_tarea.strip(), demo.get('responsable'))
+                                st.success("Tarea agregada")
+                                st.rerun()
+                        with st.form(f"demo_form_{demo['id']}"):
+                            st.markdown(f"**📝 Demo ID:** {demo['id']}")
+                            # Mostrar fecha límite arriba del formulario si existe
+                            if demo.get('fecha_limite'):
+                                st.markdown(f"<span style='font-size:13px; color:#DC3545;'><b>📅 Fecha límite:</b> {demo['fecha_limite']}</span>", unsafe_allow_html=True)
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                nuevo_titulo = st.text_input("📌 Título:", value=demo['titulo'], key=f"titulo_{demo['id']}")
+                                nueva_prioridad = st.selectbox("⚡ Prioridad:", ["baja", "media", "alta"], 
+                                                             index=["baja", "media", "alta"].index(demo['prioridad']),
+                                                             key=f"prioridad_{demo['id']}")
+                                insts = instituciones.list_instituciones(conn)
+                                inst_options = ["Sin asignar"] + [f"{inst['nombre']} (ID: {inst['id']})" for inst in insts]
+                                inst_actual = demo['institucion_nombre'] if demo['institucion_nombre'] else "Sin asignar"
+                                inst_index = 0
+                                if inst_actual != "Sin asignar":
+                                    for idx, inst_opt in enumerate(inst_options):
+                                        if inst_actual in inst_opt:
+                                            inst_index = idx
+                                            break
+                                nueva_institucion = st.selectbox("🏫 Institución:", inst_options, index=inst_index, key=f"inst_{demo['id']}")
+                                estado_actual = demo.get('estado', '')
+                                nuevo_estado = st.text_area("Estado", value=estado_actual or "", key=f"estado_{demo['id']}", height=100)
+                            with col2:
+                                nuevo_responsable = st.text_input("👤 Responsable:", value=demo['responsable'] or "", key=f"resp_{demo['id']}" )
+                                todas_las_fases_form = demos.get_fases_disponibles(conn)
+                                fase_names = [f['nombre'] for f in todas_las_fases_form]
+                                fase_actual_index = 0
+                                if demo.get('fase_nombre'):
+                                    try:
+                                        fase_actual_index = fase_names.index(demo['fase_nombre'])
+                                    except ValueError:
+                                        pass
+                                nueva_fase_sel = st.selectbox("📋 Fase:", fase_names, index=fase_actual_index, key=f"fase_{demo['id']}")
+                                # Mostrar la fecha guardada si existe, o None
+                                fecha_actual = None
+                                fecha_db = demo.get('fecha_limite')
+                                if fecha_db and isinstance(fecha_db, str) and fecha_db not in ("", "None"):
+                                    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%d-%m-%Y"):
                                         try:
-                                            fase_actual_index = fase_names.index(demo['fase_nombre'])
-                                        except ValueError:
-                                            pass
-                                    nueva_fase_sel = st.selectbox("📋 Fase:", fase_names, index=fase_actual_index, key=f"fase_{demo['id']}")
-                                    # Fecha límite
-                                    fecha_actual = None
-                                    if demo.get('fecha_limite'):
-                                        try:
-                                            fecha_actual = datetime.datetime.strptime(demo['fecha_limite'], "%Y-%m-%d").date()
-                                        except:
-                                            pass
-                                    nueva_fecha_limite = st.date_input("📅 Fecha límite:", value=fecha_actual, key=f"fecha_{demo['id']}")
-                                # Descripción completa
-                                nueva_descripcion = st.text_area("📄 Descripción:", value=demo['descripcion'] or "", height=100, key=f"desc_{demo['id']}")
-                                # Información adicional (solo lectura)
-                                col_info1, col_info2 = st.columns(2)
-                                with col_info1:
-                                    if demo.get('fecha_creacion'):
-                                        st.info(f"📅 Creado: {demo['fecha_creacion']}")
-                                with col_info2:
-                                    if demo.get('fecha_actualizacion'):
-                                        st.info(f"🔄 Actualizado: {demo['fecha_actualizacion']}")
-                                # Mostrar días restantes si hay fecha límite
-                                if nueva_fecha_limite:
-                                    dias_restantes = (nueva_fecha_limite - datetime.date.today()).days
-                                    if dias_restantes < 0:
-                                        st.error(f"⚠️ Vencido hace {abs(dias_restantes)} días")
-                                    elif dias_restantes == 0:
-                                        st.warning("⏰ Vence hoy")
-                                    elif dias_restantes <= 7:
-                                        st.warning(f"⏳ Vence en {dias_restantes} días")
-                                    else:
-                                        st.success(f"✅ {dias_restantes} días restantes")
-                                # Botones de acción
-                                col_save, col_move, col_delete = st.columns(3)
-                                with col_save:
-                                    if st.form_submit_button("💾 Guardar Cambios", type="primary", use_container_width=True):
-                                        # Procesar nueva institución
-                                        nueva_institucion_id = None
-                                        if nueva_institucion != "Sin asignar":
-                                            for inst in insts:
-                                                if f"{inst['nombre']} (ID: {inst['id']})" == nueva_institucion:
-                                                    nueva_institucion_id = inst['id']
-                                                    break
-                                        # Procesar nueva fase
-                                        nueva_fase_id = None
-                                        for f in todas_las_fases_form:
-                                            if f['nombre'] == nueva_fase_sel:
-                                                nueva_fase_id = f['id']
+                                            fecha_actual = datetime.datetime.strptime(fecha_db, fmt).date()
+                                            break
+                                        except Exception:
+                                            continue
+                                # Si no hay fecha guardada, usar None para que el campo quede vacío
+                                nueva_fecha_limite = st.date_input("📅 Fecha límite:", value=fecha_actual, key=f"fecha_{demo['id']}" )
+                            nueva_descripcion = st.text_area("📄 Descripción:", value=demo['descripcion'] or "", height=100, key=f"desc_{demo['id']}")
+                            col_info1, col_info2 = st.columns(2)
+                            with col_info1:
+                                if demo.get('fecha_creacion'):
+                                    st.info(f"📅 Creado: {demo['fecha_creacion']}")
+                            with col_info2:
+                                if demo.get('fecha_actualizacion'):
+                                    st.info(f"🔄 Actualizado: {demo['fecha_actualizacion']}")
+                            if nueva_fecha_limite:
+                                dias_restantes = (nueva_fecha_limite - datetime.date.today()).days
+                                if dias_restantes < 0:
+                                    st.error(f"⚠️ Vencido hace {abs(dias_restantes)} días")
+                                elif dias_restantes == 0:
+                                    st.warning("⏰ Vence hoy")
+                                elif dias_restantes <= 7:
+                                    st.warning(f"⏳ Vence en {dias_restantes} días")
+                                else:
+                                    st.success(f"✅ {dias_restantes} días restantes")
+                            col_save, col_move, col_delete = st.columns(3)
+                            with col_save:
+                                if st.form_submit_button("💾 Guardar Cambios", type="primary", use_container_width=True):
+                                    nueva_institucion_id = None
+                                    if nueva_institucion != "Sin asignar":
+                                        for inst in insts:
+                                            if f"{inst['nombre']} (ID: {inst['id']})" == nueva_institucion:
+                                                nueva_institucion_id = inst['id']
                                                 break
-                                        # Actualizar demo (incluye estado)
-                                        demos.update_demo(conn, demo['id'],
-                                                        titulo=nuevo_titulo,
-                                                        descripcion=nueva_descripcion,
-                                                        prioridad=nueva_prioridad,
-                                                        fase_id=nueva_fase_id,
-                                                        institucion_id=nueva_institucion_id,
-                                                        responsable=nuevo_responsable if nuevo_responsable else None,
-                                                        fecha_limite=nueva_fecha_limite.strftime('%Y-%m-%d') if nueva_fecha_limite else None,
-                                                        estado=nuevo_estado)
-                                        st.success("✅ Demo actualizada exitosamente!")
-                                        st.rerun()
-                                with col_move:
-                                    # Mover a otra fase
-                                    otras_fases = [f for f in todas_las_fases_form if f['nombre'] != nueva_fase_sel]
-                                    if otras_fases and st.form_submit_button("🔄 Mover Fase", use_container_width=True):
-                                        # Mover a la siguiente fase (o primera disponible)
-                                        siguiente_fase = otras_fases[0]
-                                        demos.cambiar_fase_demo(conn, demo['id'], siguiente_fase['id'])
-                                        st.success(f"📋 Demo movida a: {siguiente_fase['nombre']}")
-                                        st.rerun()
-                                with col_delete:
-                                    if st.form_submit_button("🗑️ Eliminar", type="secondary", use_container_width=True):
-                                        demos.delete_demo(conn, demo['id'])
-                                        st.success("🗑️ Demo eliminada")
-                                        st.rerun()
+                                    nueva_fase_id = None
+                                    for f in todas_las_fases_form:
+                                        if f['nombre'] == nueva_fase_sel:
+                                            nueva_fase_id = f['id']
+                                            break
+                                    demos.update_demo(conn, demo['id'],
+                                                    titulo=nuevo_titulo,
+                                                    descripcion=nueva_descripcion,
+                                                    prioridad=nueva_prioridad,
+                                                    fase_id=nueva_fase_id,
+                                                    institucion_id=nueva_institucion_id,
+                                                    responsable=nuevo_responsable if nuevo_responsable else None,
+                                                    fecha_limite=nueva_fecha_limite.strftime('%Y-%m-%d') if nueva_fecha_limite else None,
+                                                    estado=nuevo_estado)
+                                    st.success("✅ Demo actualizada exitosamente!")
+                                    st.rerun()
+                            with col_move:
+                                otras_fases = [f for f in todas_las_fases_form if f['nombre'] != nueva_fase_sel]
+                                if otras_fases and st.form_submit_button("🔄 Mover Fase", use_container_width=True):
+                                    siguiente_fase = otras_fases[0]
+                                    demos.cambiar_fase_demo(conn, demo['id'], siguiente_fase['id'])
+                                    st.success(f"📋 Demo movida a: {siguiente_fase['nombre']}")
+                                    st.rerun()
+                            with col_delete:
+                                if st.form_submit_button("🗑️ Eliminar", type="secondary", use_container_width=True):
+                                    demos.delete_demo(conn, demo['id'])
+                                    st.success("🗑️ Demo eliminada")
+                                    st.rerun()
 
